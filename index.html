@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>기사 추천 그래프</title>
+  <meta name="description" content="합성 기사 5,000개의 facet graph와 embedding으로 관심 분야·history 기반 추천을 보여 주는 데모">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg stroke='%2352514e' stroke-width='2'%3E%3Cpath d='M8 9 22 7M8 9l4 15M22 7l-10 17M22 7l3 13M12 24l13-4'/%3E%3C/g%3E%3Ccircle cx='8' cy='9' r='4' fill='%232a78d6'/%3E%3Ccircle cx='22' cy='7' r='4' fill='%23eb6834'/%3E%3Ccircle cx='12' cy='24' r='4' fill='%231baf7a'/%3E%3Ccircle cx='25' cy='20' r='3' fill='%23e87ba4'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>기사 추천 그래프</h1>
+      <span class="sub">기사 5,000개 · LLM facet · BGE-m3 embedding · Forward Push</span>
+    </div>
+    <button class="btn" id="howBtn" type="button">작동 방식</button>
+    <button class="btn icon" id="themeBtn" type="button" aria-label="밝은/어두운 테마 전환" title="테마 전환">◐</button>
+  </header>
+
+  <main class="layout">
+    <section class="graph-pane" aria-label="기사 그래프">
+      <div id="graph"></div>
+      <div id="clusterLabels" class="cluster-labels" aria-hidden="true"></div>
+
+      <div class="overlay graph-search">
+        <input id="graphSearch" type="search" placeholder="그래프에서 기사 제목 찾기" autocomplete="off" aria-label="기사 제목 검색">
+        <ul id="graphSuggest" class="suggest" role="listbox"></ul>
+      </div>
+
+      <button class="btn small legend-toggle" id="legendToggle" type="button">범례</button>
+      <div class="overlay legend" id="legend"></div>
+
+      <div class="overlay zoom">
+        <button type="button" id="zoomIn" aria-label="확대">+</button>
+        <button type="button" id="zoomOut" aria-label="축소">−</button>
+        <button type="button" id="zoomReset" aria-label="전체 보기">⤢</button>
+      </div>
+
+      <article class="overlay detail" id="detail" aria-live="polite"></article>
+      <div class="tooltip" id="tooltip"></div>
+      <div class="loading" id="loading">그래프를 불러오는 중…</div>
+    </section>
+
+    <aside class="side" aria-label="추천 설정과 결과">
+      <section class="card">
+        <div class="card-head">
+          <h2>프로필 예시</h2>
+          <button class="btn ghost small" id="resetBtn" type="button">초기화</button>
+        </div>
+        <div class="presets" id="presets"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>관심 분야</h2><span class="count" id="interestCount"></span></div>
+        <div id="catChips"></div>
+        <h3>관심 태그 <span class="via">· alias로 입력해도 정규화된 tag로 바뀝니다</span></h3>
+        <div class="field">
+          <input id="tagInput" type="search" placeholder="예: 조깅, 캠핑, ETF" autocomplete="off" aria-label="관심 태그 검색">
+          <ul id="tagSuggest" class="suggest" role="listbox"></ul>
+        </div>
+        <div class="chips" id="tagChips" style="margin-top:8px"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>User history</h2><span class="count" id="historyCount"></span></div>
+        <div class="field">
+          <input id="historyInput" type="search" placeholder="읽은 기사 제목 검색 (그래프에서 클릭해도 됩니다)" autocomplete="off" aria-label="history에 추가할 기사 검색">
+          <ul id="historySuggest" class="suggest" role="listbox"></ul>
+        </div>
+        <ol class="history" id="historyList"></ol>
+        <p class="hint" style="margin-top:6px">최근에 추가한 기사일수록 추천에 더 크게 반영됩니다.</p>
+      </section>
+
+      <section class="cta">
+        <button class="btn-primary" id="recommendBtn" type="button">추천하기</button>
+        <p class="hint" id="recommendHint"></p>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>추천 기사</h2><span class="count" id="recTiming"></span></div>
+        <div class="recs" id="recList"></div>
+        <details class="tuning">
+          <summary>추천 가중치 조정</summary>
+          <label class="slider"><span>Graph (Forward Push)</span><input type="range" id="wGraph" min="0" max="1" step="0.05" value="0.45"><output for="wGraph"></output></label>
+          <label class="slider"><span>Embedding 유사도</span><input type="range" id="wEmb" min="0" max="1" step="0.05" value="0.35"><output for="wEmb"></output></label>
+          <label class="slider"><span>관심 분야 일치</span><input type="range" id="wInterest" min="0" max="1" step="0.05" value="0.2"><output for="wInterest"></output></label>
+          <label class="slider"><span>다양성 (MMR)</span><input type="range" id="wDiv" min="0" max="0.6" step="0.05" value="0.3"><output for="wDiv"></output></label>
+        </details>
+      </section>
+    </aside>
+  </main>
+
+  <dialog id="howDialog" aria-labelledby="howTitle">
+    <div class="dlg" id="howBody"></div>
+  </dialog>
+
+  <script src="vendor/graphology.umd.min.js"></script>
+  <script src="vendor/sigma.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
